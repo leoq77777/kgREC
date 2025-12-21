@@ -11,17 +11,20 @@ import networkx as nx
 class KnowledgeGraphInferenceEngine:
     def __init__(self,
                  embeddings_dir: str = "models/kg_embeddings/",
-                 index_dir: str = "models/faiss_index/"):
+                 index_dir: str = "models/faiss_index/",
+                 model_path: str = "dual_tower_best.pth"):
         """
         知识图谱推理引擎初始化
         :param embeddings_dir: 嵌入文件存储目录
         :param index_dir: FAISS索引存储目录
+        :param model_path: 双塔模型存储路径
         """
         self.logger = logging.getLogger("KnowledgeGraphInferenceEngine")
         logging.basicConfig(level=logging.INFO)
 
         self.embeddings_dir = embeddings_dir
         self.index_dir = index_dir
+        self.model_path = model_path
         self.entity_embeddings = None
         self.relation_embeddings = None
         self.entity2id = None
@@ -30,11 +33,27 @@ class KnowledgeGraphInferenceEngine:
         self.id2relation = None
         self.entity_index = None
         self.graph = None
+        self.model = None
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # 加载必要的数据
+        # 加载必要的数据和模型
         self._load_embeddings()
         self._build_faiss_index()
+        self._load_dual_tower_model()
         self.logger.info("知识图谱推理引擎初始化完成")
+
+    def _load_dual_tower_model(self):
+        """加载双塔模型"""
+        from models.dual_tower import DualTowerModel
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if os.path.exists(self.model_path):
+            self.model = DualTowerModel()
+            self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
+            self.model.to(self.device)
+            self.model.eval()
+        else:
+            self.logger.warning(f"模型文件 {self.model_path} 不存在，将使用FAISS索引进行推荐")
+            self.model = None
 
     def _load_embeddings(self) -> None:
         """加载实体和关系嵌入"""
@@ -99,7 +118,41 @@ class KnowledgeGraphInferenceEngine:
             self._build_faiss_index()
 
         # 获取实体嵌入
-        entity_embedding = self.entity_embeddings[entity_id].reshape(1, -1).astype('float32')
+        if self.model is not None:
+            entity_tensor = torch.tensor([entity_id], device=self.device)
+            model_output = self.model(entity_tensor)
+            # 处理模型输出为字典的情况
+            from collections import OrderedDict
+            if isinstance(model_output, (dict, OrderedDict)):
+                    # 优先使用'embedding'键，其次使用第一个值
+                    # 优先检查常见嵌入键
+                    if 'embedding' in model_output:
+                        entity_embedding = model_output['embedding']
+                    elif 'output' in model_output:
+                        entity_embedding = model_output['output']
+                    elif 'user_embedding' in model_output:
+                        entity_embedding = model_output['user_embedding']
+                    elif 'item_embedding' in model_output:
+                        entity_embedding = model_output['item_embedding']
+            else:
+                # 遍历查找第一个张量
+                entity_embedding = None
+                for value in model_output.values():
+                    if isinstance(value, torch.Tensor):
+                        entity_embedding = value
+                        break
+                if entity_embedding is None:
+                    self.logger.error("模型输出中未找到张量")
+                    entity_embedding = self.entity_embeddings[entity_id].reshape(1, -1).astype('float32')
+                    return self._search_faiss_index(entity_embedding, top_k)
+                # 确保实体嵌入是张量
+        if not isinstance(entity_embedding, torch.Tensor):
+            self.logger.error(f"模型输出不是张量，回退到FAISS索引推荐: {type(entity_embedding)}")
+            entity_embedding = self.entity_embeddings[entity_id].reshape(1, -1).astype('float32')
+            return self._search_faiss_index(entity_embedding, top_k)
+        else:
+            entity_embedding = model_output
+        entity_embedding = entity_embedding.cpu().detach().numpy().reshape(1, -1).astype('float32')
 
         # 搜索相似实体
         distances, indices = self.entity_index.search(entity_embedding, top_k + 1)  # +1 因为最相似的是自身
@@ -226,7 +279,9 @@ class KnowledgeGraphInferenceEngine:
                 continue
 
             # 查找相似物品
-            similar_items = self.find_similar_entities(item_id, top_k * 2)
+            # 处理模型输出为OrderedDict的情况
+            model_output = self.find_similar_entities(item_id, top_k * 2)
+            similar_items = model_output['similar_items'] if isinstance(model_output, dict) else model_output
             for similar_item, similarity in similar_items:
                 # 过滤已交互物品和非目标类型物品
                 if similar_item in user_items:
@@ -237,7 +292,7 @@ class KnowledgeGraphInferenceEngine:
                 # 累积分数
                 if similar_item in item_scores:
                     item_scores[similar_item] += similarity
-                else:
+            else:
                     item_scores[similar_item] = similarity
 
         # 排序并返回推荐结果

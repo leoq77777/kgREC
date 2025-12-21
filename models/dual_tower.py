@@ -11,7 +11,7 @@ class DualTowerModel(nn.Module):
         
         # 用户塔
         self.user_tower = nn.Sequential(
-            nn.Linear(user_feature_dim, 256),
+            nn.Linear(10, 256),
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
@@ -20,7 +20,7 @@ class DualTowerModel(nn.Module):
         
         # 物品塔
         self.item_tower = nn.Sequential(
-            nn.Linear(item_feature_dim, 256),
+            nn.Linear(10, 256),
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
@@ -43,10 +43,10 @@ class DualTowerModel(nn.Module):
         
     def calculate_loss(self, user_emb, item_emb, labels):
         # 计算余弦相似度
-        cos_sim = torch.matmul(user_emb, item_emb.T) * torch.exp(self.temperature)
-        
-        # InfoNCE损失
-        loss = F.cross_entropy(cos_sim, labels)
+        # 计算用户-物品对相似度（1D向量）
+        cos_sim = F.cosine_similarity(user_emb, item_emb, dim=1) * torch.exp(self.temperature)  # 点积相似度
+        # 二元分类使用BCEWithLogitsLoss，确保输入输出形状匹配
+        loss = F.binary_cross_entropy_with_logits(cos_sim, labels.to(torch.float))
         return loss
 
 class RecommendationDataset(Dataset):
@@ -89,6 +89,8 @@ class FAISSIndexer:
 
 # 训练函数
 def train_dual_tower(model, train_dataset, val_dataset, epochs=50, batch_size=256, lr=0.001):
+    train_losses = []
+    val_losses = []
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
     
@@ -127,6 +129,8 @@ def train_dual_tower(model, train_dataset, val_dataset, epochs=50, batch_size=25
         val_loss /= len(val_loader.dataset)
         
         print(f'Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}')
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
         
         # 学习率调度
         scheduler.step(val_loss)
@@ -137,4 +141,4 @@ def train_dual_tower(model, train_dataset, val_dataset, epochs=50, batch_size=25
             torch.save(model.state_dict(), 'dual_tower_best.pth')
             print(f'Saved best model with val loss: {best_val_loss:.4f}')
     
-    return model
+    return model, train_losses, val_losses

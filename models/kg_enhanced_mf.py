@@ -4,32 +4,33 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 
 class KnowledgeEnhancedMF(nn.Module):
-    def __init__(self, num_users, num_movies, num_tags, embedding_dim=64):
+    def __init__(self, num_users, num_items, num_tags, embedding_dim=64):
         super().__init__()
         # 用户和电影嵌入层
         self.user_emb = nn.Embedding(num_users + 1, embedding_dim)
-        self.movie_emb = nn.Embedding(num_movies + 1, embedding_dim)
+        self.item_emb = nn.Embedding(num_items + 1, embedding_dim)
         # 偏置项
         self.user_bias = nn.Embedding(num_users + 1, 1)
-        self.movie_bias = nn.Embedding(num_movies + 1, 1)
+        self.item_bias = nn.Embedding(num_items + 1, 1)
+        self.num_tags = num_tags
         # 标签特征注意力层
         self.tag_attention = nn.Sequential(
-            nn.Linear(num_tags, 32),
+            nn.Linear(self.num_tags, 32),
             nn.ReLU(),
             nn.Linear(32, 1)
         )
         # 初始化权重
         nn.init.normal_(self.user_emb.weight, std=0.01)
-        nn.init.normal_(self.movie_emb.weight, std=0.01)
+        nn.init.normal_(self.item_emb.weight, std=0.01)
         nn.init.zeros_(self.user_bias.weight)
-        nn.init.zeros_(self.movie_bias.weight)
+        nn.init.zeros_(self.item_bias.weight)
 
     def forward(self, user_ids, movie_ids, tag_features):
         # 矩阵分解基础得分
         user_vec = self.user_emb(user_ids)
-        movie_vec = self.movie_emb(movie_ids)
-        mf_score = (user_vec * movie_vec).sum(1)
-        mf_score += self.user_bias(user_ids).squeeze() + self.movie_bias(movie_ids).squeeze()
+        item_vec = self.item_emb(movie_ids)
+        mf_score = (user_vec * item_vec).sum(1)
+        mf_score += self.user_bias(user_ids).squeeze() + self.item_bias(movie_ids).squeeze()
 
         # 标签特征注意力加权
         tag_weights = self.tag_attention(tag_features).squeeze()

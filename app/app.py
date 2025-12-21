@@ -1,4 +1,4 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 import os
 import sys
@@ -13,7 +13,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from models.kg_inference_engine import KnowledgeGraphInferenceEngine
 
 app = Flask(__name__)
-CORS(app)  # 启用跨域资源共享
+CORS(app, resources={r"/*": {"origins": "*"}})  # 启用跨域资源共享
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -36,17 +36,46 @@ def init_engine():
 def health_check():
     return jsonify({"status": "healthy", "service": "kg-recommendation-api"})
 
-@app.route('/recommend/<user_id>', methods=['GET'])
+@app.route('/user-recommend/<user_id>', methods=['GET'])
 def recommend_items(user_id):
+    print(f"Received request for user_id: {user_id}")
     try:
+        app.logger.info(f"接收到推荐请求 - 用户ID: {user_id}, 请求方法: {request.method}, 请求参数: {request.args}")
         init_engine()
         recommendations = inference_engine.recommend_items(user_id, top_k=10)
+        app.logger.info(f"推荐成功 - 用户ID: {user_id}, 推荐数量: {len(recommendations)}")
         return jsonify({
             "user_id": user_id,
             "recommendations": [{
                 "item_id": item,
                 "score": float(score)
             } for item, score in recommendations]
+        })
+    except Exception as e:
+        app.logger.error(f"推荐接口异常: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/recommend', methods=['GET'])
+def recommend():
+    try:
+        init_engine()
+        item_id = int(request.args.get('item_id'))
+        top_k = int(request.args.get('top_k', 10))
+
+        # 获取物品嵌入
+        item_embedding = inference_engine.get_item_embedding(item_id)
+        if item_embedding is None:
+            return jsonify({'error': 'Item not found'}), 404
+
+        # 搜索相似物品
+        distances, indices = inference_engine.search_similar_items(item_embedding, top_k)
+
+        return jsonify({
+            'item_id': item_id,
+            'recommendations': [{
+                'item_index': int(idx),
+                'distance': float(dist)
+            } for idx, dist in zip(indices, distances)]
         })
     except Exception as e:
         app.logger.error(f"推荐服务错误: {str(e)}")
