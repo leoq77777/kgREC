@@ -1,0 +1,29 @@
+# 云训练环境依赖
+# 针对GPU训练优化
+
+# 核心框架
+torch>=2.0.0
+torchvision>=0.15.0
+torch-geometric>=2.1.0
+torch-scatter>=2.1.0
+
+# 数据处理
+numpy>=1.24.0
+pandas>=1.5.0
+scipy>=1.10.0
+
+# 机器学习
+scikit-learn>=1.2.0
+
+# 可视化
+matplotlib>=3.7.0
+
+# 工具
+tqdm>=4.65.0
+prettytable>=3.7.0
+setproctitle>=1.3.0
+networkx>=2.8.0
+
+# 可选：如果需要FAISS加速（GPU版本）
+# faiss-gpu>=1.7.0
+

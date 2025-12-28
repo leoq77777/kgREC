@@ -63,3 +63,6 @@ Thumbs.db
 *.tmp
 *.bak
 nohup.out
+
+# Cloud results
+cloud_results/
